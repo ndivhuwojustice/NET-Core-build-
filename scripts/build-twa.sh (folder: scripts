@@ -1,1 +1,7 @@
 
+Should run bubblewrap generation and build steps in CI:
+install or run bubblewrap (npx/@bubblewrap/cli)
+run bubblewrap using the bubblewrap-config.json to generate the Android project
+run the Android Gradle build to produce an AAB (bundleRelease)
+sign the AAB with the upload keystore (or use generated keystore)
+Save the script and mark it executable locally or configure CI to run it.
