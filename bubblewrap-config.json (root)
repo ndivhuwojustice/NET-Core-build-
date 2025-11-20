@@ -1,1 +1,7 @@
 
+packageName: com.ceeanproject.netcorebuild
+appName / launcherName: Net Core Desktop Builds
+startUrl: https://mamidza.dream.space/
+scope and display: info derived from your manifest (display: standalone)
+themeColor and backgroundColor (hex)
+icon filenames that will live in store-assets/ (512x512 and other sizes)
