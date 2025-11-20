@@ -1,4 +1,4 @@
-should include:
+include field:
 packageName: com.ceeanproject.netcorebuild
 appName / launcherName: Net Core Desktop Builds
 startUrl: https://mamidza.dream.space/
