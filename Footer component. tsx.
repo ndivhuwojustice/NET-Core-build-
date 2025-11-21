@@ -1,0 +1,149 @@
+// Footer component occupies full width (12 columns) and 5 rows in the grid
+// It displays helpful project links on the left and a newsletter sign-up & sponsor call-to-action on the right
+
+// ---------------------------
+// Types
+// ---------------------------
+type NewsletterFormState = {
+  email: string;
+};
+
+// ---------------------------
+// Component
+// ---------------------------
+const FooterComponent: React.FC = () => {
+  // ----------------------------------
+  // State
+  // ----------------------------------
+  const [formState, setFormState] = React.useState<NewsletterFormState>({ email: "" });
+
+  // ---------------------------
+  // Handlers
+  // ---------------------------
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFormState({ email: e.target.value });
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    // For now we simply clear the field – integration can be added later.
+    setFormState({ email: "" });
+    // In a real app you would send the email to your newsletter backend here.
+  };
+
+  // Direct sponsor page link (updated)
+  const sponsorLink = "https://github.com/sponsors/CEEANPROJEC";
+
+  return (
+    <div className="w-full h-full @container overflow-x-hidden">
+      {/* Main footer wrapper */}
+      <footer className="w-full h-full bg-background/80 text-muted-foreground flex flex-col gap-6 p-6">
+        {/* Top section: Links + CTA area */}
+        <div className="flex flex-col @xl:flex-row w-full items-start @xl:items-center justify-between gap-6">
+          {/* Link section */}
+          <div className="flex flex-col gap-2">
+            <ul className="prose font-custom not-italic list-none m-0 p-0 flex flex-col gap-4 @xl:flex-row @xl:gap-8">
+              <li>
+                <a
+                  href="https://docs.github.com/en/actions"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors font-custom text-sm"
+                >
+                  {Lucide.BookOpen && <Lucide.BookOpen size={16} className="text-current" />} GitHub Actions Docs
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://learn.microsoft.com/dotnet/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors font-custom text-sm"
+                >
+                  {Lucide.Download && <Lucide.Download size={16} className="text-current" />} Download .NET
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://github.com/your-org/your-project"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors font-custom text-sm"
+                >
+                  {Lucide.Github && <Lucide.Github size={16} className="text-current" />} Project Repository
+                </a>
+              </li>
+            </ul>
+            {/* Helper text (updated) */}
+            <p className="font-custom text-xs text-muted-foreground mt-2">
+              Want to sponsor this project? Click Sponsor or visit our sponsor page below.
+            </p>
+          </div>
+
+          {/* Right side: CTA & Newsletter */}
+          <div className="flex flex-col @xl:flex-row items-stretch gap-4 w-full @xl:w-auto">
+            {/* Sponsor button (updated link, opens in new tab) */}
+            <DreamspaceElements.Button variant="primary" asChild className="flex-shrink-0">
+              <a
+                href={sponsorLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Sponsor this project"
+                className="flex items-center gap-2"
+              >
+                {Lucide.Heart && <Lucide.Heart size={16} className="text-current" />} Sponsor
+              </a>
+            </DreamspaceElements.Button>
+
+            {/* Newsletter sign-up */}
+            <form
+              onSubmit={handleSubmit}
+              className="flex flex-col @xl:flex-row items-stretch gap-4 w-full @xl:w-auto"
+            >
+              <DreamspaceElements.Input
+                placeholder="Email for updates"
+                value={formState.email}
+                onChange={handleChange}
+                className="font-custom text-sm flex-1 min-w-0"
+                type="email"
+                required
+              />
+              <DreamspaceElements.Button variant="secondary" type="submit" className="flex-shrink-0">
+                Subscribe
+              </DreamspaceElements.Button>
+            </form>
+          </div>
+
+          {/* Secondary sponsor platform (collapsed into single link) */}
+          <ul className="prose font-custom not-italic list-none m-0 p-0 flex flex-col gap-4 @xl:flex-row @xl:gap-8">
+            <li>
+              <a
+                href={sponsorLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors font-custom text-sm"
+              >
+                {Lucide.HeartHandshake && <Lucide.HeartHandshake size={16} className="text-current" />} Sponsor Page
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        {/* Contact information */}
+        <div className="prose font-custom text-xs text-muted-foreground flex flex-col @xl:flex-row gap-2 items-start @xl:items-center">
+          <span className="font-custom">
+            Email:{" "}
+            {/* Clicking opens mail client as requested */}
+            <a href="mailto:ndivhuwoj22@gmail.com" className="underline hover:text-foreground">
+              ndivhuwoj22@gmail.com
+            </a>
+          </span>
+          <span className="font-custom">Twitter: @ndivhuwojustic2</span>
+          <span className="font-custom">LinkedIn: ndivhuwo Justice</span>
+        </div>
+      </footer>
+    </div>
+  );
+};
+
+export { FooterComponent as component };
