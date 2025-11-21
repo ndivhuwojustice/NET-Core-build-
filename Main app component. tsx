@@ -1,0 +1,785 @@
+/* eslint-disable react-hooks/rules-of-hooks */
+// Dashboard component with optional live API integration, polling & mock fallback
+// ------------------------------------------------------------
+// NOTE: No external libraries are imported – everything relies on globals
+// React, DreamspaceElements, Lucide, ReactECharts & proxyFetch (if provided)
+// ------------------------------------------------------------
+
+const MainAppComponent: React.FC = () => {
+  // ------------------------------------------------------------
+  // Types & interfaces (for developer clarity only – erased at runtime)
+  // ------------------------------------------------------------
+  interface TestStats {
+    passed: number;
+    failed: number;
+    total: number;
+  }
+  interface Artifact {
+    name: string;
+    size: string;
+  }
+  interface Build {
+    configuration: string; // e.g. "Debug" | "Release"
+    job: string;           // e.g. "Restore" | "Test" | "Package"
+    status: string;        // success | failed | running | pending
+    started_at: string;    // ISO date string
+    duration: number;      // seconds
+    tests: TestStats;
+    artifacts: Artifact[];
+    logs: string[];
+  }
+
+  // ------------------------------------------------------------
+  // Helper: Produce mock data identical to the previous hard-coded values
+  // ------------------------------------------------------------
+  const buildMockData = React.useCallback((): Build[] => {
+    const makeLogs = (prefix: string, len: number) =>
+      Array.from({ length: len }, (_, i) => `${prefix} log line ${i + 1}`);
+
+    return [
+      {
+        configuration: "Debug",
+        job: "Restore",
+        status: "success",
+        started_at: "2024-04-08T14:12:00Z",
+        duration: 34,
+        tests: { passed: 0, failed: 0, total: 0 },
+        artifacts: [],
+        logs: makeLogs("Restore", 40),
+      },
+      {
+        configuration: "Debug",
+        job: "Test",
+        status: "failed",
+        started_at: "2024-04-08T14:18:00Z",
+        duration: 85,
+        tests: { passed: 120, failed: 12, total: 132 },
+        artifacts: [],
+        logs: makeLogs("Test", 50),
+      },
+      {
+        configuration: "Debug",
+        job: "Package",
+        status: "running",
+        started_at: "2024-04-08T14:22:00Z",
+        duration: 10,
+        tests: { passed: 0, failed: 0, total: 0 },
+        artifacts: [
+          { name: "myproject-debug.zip", size: "12.4 MB" },
+        ],
+        logs: makeLogs("Package", 35),
+      },
+      {
+        configuration: "Release",
+        job: "Restore",
+        status: "success",
+        started_at: "2024-04-07T18:05:00Z",
+        duration: 32,
+        tests: { passed: 0, failed: 0, total: 0 },
+        artifacts: [],
+        logs: makeLogs("Restore", 40),
+      },
+      {
+        configuration: "Release",
+        job: "Test",
+        status: "success",
+        started_at: "2024-04-07T18:10:00Z",
+        duration: 78,
+        tests: { passed: 98, failed: 7, total: 105 },
+        artifacts: [],
+        logs: makeLogs("Test", 50),
+      },
+      {
+        configuration: "Release",
+        job: "Package",
+        status: "pending",
+        started_at: "2024-04-07T18:15:00Z",
+        duration: 0,
+        tests: { passed: 0, failed: 0, total: 0 },
+        artifacts: [
+          { name: "myproject-release.zip", size: "11.2 MB" },
+          { name: "docs-package.tar.gz", size: "4.8 MB" },
+        ],
+        logs: makeLogs("Package", 35),
+      },
+    ];
+  }, []);
+
+  // ------------------------------------------------------------
+  // State – data, loading, error, polling config & API config UI
+  // ------------------------------------------------------------
+  const [builds, setBuilds] = React.useState<Build[] | null>(null);
+  const [loading, setLoading] = React.useState<boolean>(true);
+  const [error, setError] = React.useState<string | null>(null);
+
+  // API configuration UI state
+  const [useLiveApi, setUseLiveApi] = React.useState<boolean>(false);
+  const [apiDomain, setApiDomain] = React.useState<string>("");
+  const [apiPrefix, setApiPrefix] = React.useState<string>("");
+  const [apiPath, setApiPath] = React.useState<string>("");
+
+  // Active filters coming from ActionableComponent (if any)
+  const [filters, setFilters] = React.useState<Record<string, string> | null>(null);
+  
+  // ------------------------------------------------------------
+  // Upgrade panel UI state
+  // ------------------------------------------------------------
+  // Whether the upgrade panel modal is open
+  const [dialogOpen, setDialogOpen] = React.useState<boolean>(false);
+  // Billing cycle – false = monthly, true = annual
+  const [billingCycleAnnual, setBillingCycleAnnual] = React.useState<boolean>(false);
+  // Simple checkout form fields (mock-only)
+  const [customerName, setCustomerName] = React.useState<string>("");
+  const [customerEmail, setCustomerEmail] = React.useState<string>("");
+
+  // refs for debouncing and polling interval tracking
+  const debounceRef = React.useRef<number>();
+
+  // ------------------------------------------------------------
+  // Data fetcher (mock or live) – accepts optional query params
+  // ------------------------------------------------------------
+  const fetchData = React.useCallback(
+    async (queryParams?: Record<string, string | number>) => {
+      setLoading(true);
+      setError(null);
+      try {
+        if (!useLiveApi) {
+          // mock path
+          const data = buildMockData();
+          setBuilds(data);
+        } else {
+          // Live API path
+          if (!apiDomain || !apiPath) {
+            throw new Error("API domain & path are required when live API is enabled.");
+          }
+          const query = queryParams
+            ? `?${Object.entries(queryParams)
+                .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+                .join("&")}`
+            : "";
+          const url = `${apiDomain}${apiPrefix}${apiPath}${query}`;
+          // @ts-ignore – proxyFetch may exist globally
+          const res = await (typeof proxyFetch !== "undefined" ? proxyFetch(url) : fetch(url));
+          if (!res.ok) {
+            if (res.status === 403) {
+              throw new Error(
+                "Access denied. Please configure your API key in Account Settings → Integrations."
+              );
+            }
+            throw new Error(`API request failed: ${res.status} ${res.statusText}`);
+          }
+          const json = await res.json();
+          const normalized: Build[] = (json.builds ?? json.data) as Build[];
+          setBuilds(normalized);
+        }
+      } catch (err: any) {
+        setError(err.message ?? "Unknown error");
+        setBuilds(null);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [useLiveApi, apiDomain, apiPrefix, apiPath, buildMockData]
+  );
+
+  // Manual refresh handler
+  const handleRefresh = React.useCallback(() => fetchData(filters ?? undefined), [fetchData, filters]);
+
+  // ------------------------------------------------------------
+  // ActionableComponent → MainApp filter bridge
+  // ------------------------------------------------------------
+  const applyFiltersHandler = React.useCallback(
+    (e: CustomEvent) => {
+      const detail = e.detail ?? {};
+
+      // Map incoming filter keys to API query param names
+      const mapped: Record<string, string> = {};
+      if (detail.branch) mapped.branch = detail.branch;
+      if (detail.config) mapped.config = detail.config;
+      if (detail.jobType) mapped.job_type = detail.jobType;
+      if (detail.dateRange && detail.dateRange.start && detail.dateRange.end) {
+        mapped.start = detail.dateRange.start;
+        mapped.end = detail.dateRange.end;
+      }
+
+      // Debounce to prevent rapid consecutive refetches
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+      debounceRef.current = window.setTimeout(() => {
+        setFilters(mapped);
+        fetchData(mapped);
+      }, 300);
+    },
+    [fetchData]
+  );
+
+  // Attach / detach ActionableComponent filter listener
+  React.useEffect(() => {
+    window.addEventListener(
+      "ActionableComponent:ApplyFilters",
+      applyFiltersHandler as EventListener
+    );
+    return () =>
+      window.removeEventListener(
+        "ActionableComponent:ApplyFilters",
+        applyFiltersHandler as EventListener
+      );
+  }, [applyFiltersHandler]);
+
+  // Clear filters handler – notifies ActionableComponent it can reset too
+  const handleClearFilters = React.useCallback(() => {
+    setFilters(null);
+    fetchData();
+    window.dispatchEvent(new CustomEvent("MainApp:ClearFilters"));
+  }, [fetchData]);
+
+  // ------------------------------------------------------------
+  // Polling – restart whenever filters change so interval always
+  //           uses most up-to-date query params
+  // ------------------------------------------------------------
+  React.useEffect(() => {
+    fetchData(filters ?? undefined);
+    const interval = window.setInterval(() => {
+      fetchData(filters ?? undefined);
+    }, 15000);
+
+    return () => window.clearInterval(interval);
+  }, [fetchData, filters]);
+
+  // Listen for legacy external applyFilters event (kept for bwd-compat)
+  React.useEffect(() => {
+    const handler = (e: CustomEvent) => {
+      fetchData(e.detail ?? {});
+    };
+    window.addEventListener("applyFilters", handler as EventListener);
+    return () => window.removeEventListener("applyFilters", handler as EventListener);
+  }, [fetchData]);
+
+  // ------------------------------------------------------------
+  // Derived UI data (build matrix rows, chart data, artifacts, logs)
+  // ------------------------------------------------------------
+  const buildMatrixRows = React.useMemo(() => {
+    if (!builds)
+      return [] as {
+        configuration: string;
+        job: string;
+        status: string;
+        lastRun: string;
+      }[];
+    return builds.map((b) => ({
+      configuration: b.configuration,
+      job: b.job,
+      status: b.status,
+      lastRun: new Date(b.started_at).toLocaleString(),
+    }));
+  }, [builds]);
+
+  const artifacts = React.useMemo(() => {
+    if (!builds) return [] as Artifact[];
+    return builds.flatMap((b) => b.artifacts);
+  }, [builds]);
+
+  const logData = React.useMemo(() => {
+    if (!builds) return {} as Record<string, string[]>;
+    return builds.reduce<Record<string, string[]>>((acc, b) => {
+      acc[b.job] = b.logs;
+      return acc;
+    }, {});
+  }, [builds]);
+
+  const testChartOption = React.useMemo(() => {
+    if (!builds) return {};
+    const configs = Array.from(new Set(builds.map((b) => b.configuration)));
+    const passData = configs.map((cfg) => {
+      const cfgBuilds = builds.filter((b) => b.configuration === cfg);
+      return cfgBuilds.reduce((sum, b) => sum + b.tests.passed, 0);
+    });
+    const failData = configs.map((cfg) => {
+      const cfgBuilds = builds.filter((b) => b.configuration === cfg);
+      return cfgBuilds.reduce((sum, b) => sum + b.tests.failed, 0);
+    });
+    return {
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+      legend: {
+        data: ["Pass", "Fail"],
+        textStyle: { color: "currentColor", fontFamily: "inherit" },
+      },
+      grid: { left: "3%", right: "4%", bottom: "3%", containLabel: true },
+      xAxis: {
+        type: "category",
+        data: configs,
+        axisTick: { alignWithLabel: true },
+        axisLabel: { color: "currentColor", fontFamily: "inherit" },
+      },
+      yAxis: {
+        type: "value",
+        axisLabel: { color: "currentColor", fontFamily: "inherit" },
+      },
+      series: [
+        {
+          name: "Pass",
+          type: "bar",
+          stack: "Total",
+          emphasis: { focus: "series" },
+          itemStyle: { color: "#22c55e" },
+          data: passData,
+        },
+        {
+          name: "Fail",
+          type: "bar",
+          stack: "Total",
+          emphasis: { focus: "series" },
+          itemStyle: { color: "#ef4444" },
+          data: failData,
+        },
+      ],
+    };
+  }, [builds]);
+
+  // ------------------------------------------------------------
+  // Helpers – status badge & skeleton rows
+  // ------------------------------------------------------------
+  const statusBadge = (status: string) => {
+    const statusMap: Record<
+      string,
+      { text: string; variant: "success" | "destructive" | "secondary" | "accent" }
+    > = {
+      success: { text: "Success", variant: "success" },
+      failed: { text: "Failed", variant: "destructive" },
+      running: { text: "Running", variant: "accent" },
+      pending: { text: "Pending", variant: "secondary" },
+    };
+    const data = statusMap[status] ?? statusMap["pending"];
+    return (
+      <DreamspaceElements.Badge
+        variant={data.variant}
+        className="capitalize text-[10px] font-custom"
+      >
+        {data.text}
+      </DreamspaceElements.Badge>
+    );
+  };
+
+  const renderSkeletonRows = (count: number) =>
+    Array.from({ length: count }, (_, i) => (
+      <DreamspaceElements.TableRow key={`skeleton-${i}`}>
+        {Array.from({ length: 4 }, (_, j) => (
+          <DreamspaceElements.TableCell key={j}>
+            <DreamspaceElements.Skeleton className="h-4 w-full" />
+          </DreamspaceElements.TableCell>
+        ))}
+      </DreamspaceElements.TableRow>
+    ));
+
+  // ------------------------------------------------------------
+  // Render – UI Sections remain largely unchanged with added controls
+  // ------------------------------------------------------------
+  return (
+    <div className="@container w-full h-full overflow-x-hidden flex flex-col gap-6 p-6">
+      {/* Header – API configuration & manual refresh */}
+      <header className="border border-gray-300 rounded-md shadow-sm p-4 flex flex-wrap gap-4 bg-background items-center justify-between">
+        <div className="flex items-center gap-2">
+          {Lucide.ServerCog && (
+            <Lucide.ServerCog size={16} className="text-site-foreground" />
+          )}
+          <h1 className="prose font-custom text-[11px] text-site-foreground tracking-wide uppercase">
+            Data Source
+          </h1>
+        </div>
+        <div className="flex flex-wrap gap-4 items-center">
+          <div className="flex items-center gap-2">
+            <span className="font-custom text-xs text-site-foreground">Use Live API</span>
+            <DreamspaceElements.Switch
+              checked={useLiveApi}
+              onCheckedChange={setUseLiveApi}
+            />
+          </div>
+          <DreamspaceElements.Input
+            placeholder="https://api.example.com"
+            value={apiDomain}
+            onChange={(e: any) => setApiDomain(e.target.value)}
+            disabled={!useLiveApi}
+            className="w-36 font-custom text-xs"
+          />
+          <DreamspaceElements.Input
+            placeholder="/v1"
+            value={apiPrefix}
+            onChange={(e: any) => setApiPrefix(e.target.value)}
+            disabled={!useLiveApi}
+            className="w-16 font-custom text-xs"
+          />
+          <DreamspaceElements.Input
+            placeholder="/builds"
+            value={apiPath}
+            onChange={(e: any) => setApiPath(e.target.value)}
+            disabled={!useLiveApi}
+            className="w-24 font-custom text-xs"
+          />
+          <DreamspaceElements.Button
+            size="sm"
+            variant="secondary"
+            onClick={handleRefresh}
+            className="gap-1"
+          >
+            {Lucide.RefreshCw && (
+              <Lucide.RefreshCw size={14} className="text-foreground" />
+            )}
+            <span className="font-custom text-[11px]">Refresh</span>
+          </DreamspaceElements.Button>
+        </div>
+      </header>
+
+      {/* ------------------------------------------------------------ */}
+      {/* Upgrade to Pro – collapsible marketing / upsell panel       */}
+      {/* ------------------------------------------------------------ */}
+      <DreamspaceElements.Collapsible defaultOpen className="w-full">
+        <DreamspaceElements.CollapsibleTrigger asChild>
+          <button className="w-full border border-gray-300 rounded-md shadow-sm p-4 bg-background flex items-center justify-between hover:bg-secondary/20">
+            <div className="flex items-center gap-2">
+              {Lucide.Star && <Lucide.Star size={16} className="text-site-foreground" />}
+              <h2 className="prose font-custom text-[11px] text-site-foreground tracking-wide uppercase">
+                Upgrade to Pro
+              </h2>
+            </div>
+            {Lucide.ChevronDown && <Lucide.ChevronDown size={14} className="text-site-foreground" />}
+          </button>
+        </DreamspaceElements.CollapsibleTrigger>
+        <DreamspaceElements.CollapsibleContent className="p-4 border-x border-b border-gray-300 rounded-b-md shadow-sm bg-background flex flex-col gap-6">
+          {/* Feature list */}
+          <ul className="prose font-custom text-sm text-site-foreground list-disc pl-4 grid gap-1">
+            {["Unlimited build history", "Priority support", "Advanced analytics", "Team collaboration"].map((feat) => (
+              <li key={feat} className="flex items-center gap-2">
+                {Lucide.Check && <Lucide.Check size={14} className="text-green-500" />}
+                <span>{feat}</span>
+              </li>
+            ))}
+          </ul>
+
+          {/* Pricing tiers */}
+          <div className="grid @sm:grid-cols-2 gap-4">
+            {/* Individual Plan */}
+            // Pricing card – Individual Pro (prices are editable constants)
+              // Pricing card – Team Plan (prices are editable constants)
+            <DreamspaceElements.Card className="p-4 flex flex-col gap-4 bg-background">
+              <h3 className="font-custom text-base text-site-foreground flex items-center gap-1">
+                {Lucide.User && <Lucide.User size={16} className="text-site-foreground" />} Individual Pro
+              </h3>
+              <p className="font-custom text-xs text-site-foreground">
+                {billingCycleAnnual ? "$69 / year" : "$7.99 / month"}
+              </p>
+              <div className="flex flex-col @sm:flex-row gap-2">
+                {/* Primary CTA – free trial */}
+                <DreamspaceElements.Button
+                  size="sm"
+                  className="flex-1 gap-1"
+                  aria-label="Start 14-day free trial for Individual Pro"
+                  onClick={() => setDialogOpen(true)}
+                >
+                {Lucide.Rocket && <Lucide.Rocket size={14} className="text-foreground" />}
+                <span className="font-custom text-[11px]">Start 14-day free trial</span>
+              </DreamspaceElements.Button>
+              </div>
+            </DreamspaceElements.Card>
+            {/* Team Plan */}
+            <DreamspaceElements.Card className="p-4 flex flex-col gap-4 bg-background">
+              <h3 className="font-custom text-base text-site-foreground flex items-center gap-1">
+                {Lucide.Users && <Lucide.Users size={16} className="text-site-foreground" />} Team Plan
+              </h3>
+              <p className="font-custom text-xs text-site-foreground">
+                {billingCycleAnnual ? "$299 / year" : "$29.99 / month"}
+              </p>
+              <div className="flex flex-col @sm:flex-row gap-2">
+                {/* Primary CTA – free trial */}
+                <DreamspaceElements.Button
+                  size="sm"
+                  className="flex-1 gap-1"
+                  aria-label="Start 14-day free trial for Team Plan"
+                  onClick={() => setDialogOpen(true)}
+                >
+                  {Lucide.Rocket && <Lucide.Rocket size={14} className="text-foreground" />}
+                  <span className="font-custom text-[11px]">Start 14-day free trial</span>
+                </DreamspaceElements.Button>
+                {/* Secondary CTA – choose plan */}
+                <DreamspaceElements.Button
+                  variant="secondary"
+                  size="sm"
+                  className="flex-1 gap-1"
+                  aria-label="Choose Team Plan"
+                  onClick={() => setDialogOpen(true)}
+                >
+                {Lucide.CheckCircle && <Lucide.CheckCircle size={14} className="text-foreground" />}
+                <span className="font-custom text-[11px]">Choose Plan</span>
+              </DreamspaceElements.Button>
+            </DreamspaceElements.Card>
+          </div>
+
+          {/* Billing cycle toggle */}
+          <div className="flex items-center gap-2">
+            <span className="font-custom text-xs text-site-foreground">Monthly</span>
+            <DreamspaceElements.Switch checked={billingCycleAnnual} onCheckedChange={setBillingCycleAnnual} />
+            <span className="font-custom text-xs text-site-foreground">Annual (save 25%)</span>
+          </div>
+        </DreamspaceElements.CollapsibleContent>
+      </DreamspaceElements.Collapsible>
+
+      {/* Upgrade Dialog */}
+      <DreamspaceElements.Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DreamspaceElements.DialogContent className="bg-background p-6 flex flex-col gap-6 max-w-md">
+          <DreamspaceElements.DialogHeader>
+            <DreamspaceElements.DialogTitle className="font-custom text-site-foreground text-base flex items-center gap-2">
+              {Lucide.CreditCard && <Lucide.CreditCard size={16} className="text-site-foreground" />}
+              Complete your upgrade
+            </DreamspaceElements.DialogTitle>
+            <DreamspaceElements.DialogDescription className="font-custom text-xs">
+              Enter your details to proceed to our secure payment portal.
+            </DreamspaceElements.DialogDescription>
+          </DreamspaceElements.DialogHeader>
+
+          <div className="flex flex-col gap-4">
+            <DreamspaceElements.Input
+              placeholder="Full Name"
+              value={customerName}
+              onChange={(e: any) => setCustomerName(e.target.value)}
+              className="font-custom text-xs"
+            />
+            <DreamspaceElements.Input
+              placeholder="Email Address"
+              value={customerEmail}
+              onChange={(e: any) => setCustomerEmail(e.target.value)}
+              className="font-custom text-xs"
+            />
+            <DreamspaceElements.Button asChild className="gap-1">
+              <a href="#" target="_blank" rel="noopener noreferrer" className="w-full flex items-center justify-center">
+                {Lucide.ArrowRightCircle && <Lucide.ArrowRightCircle size={14} className="text-foreground" />}
+                <span className="font-custom text-[11px]">Proceed to Payment</span>
+              </a>
+            </DreamspaceElements.Button>
+          </div>
+        </DreamspaceElements.DialogContent>
+      </DreamspaceElements.Dialog>
+
+      {/* Active Filters Display */}
+      {filters && Object.keys(filters).length > 0 && (
+        <div className="border border-gray-200 rounded-md shadow-sm p-3 bg-background flex flex-wrap gap-2 items-center">
+          <h3 className="prose font-custom text-[11px] text-site-foreground tracking-wide uppercase flex items-center gap-1">
+            {Lucide.Filter && <Lucide.Filter size={14} className="text-site-foreground" />} Active Filters:
+          </h3>
+          {Object.entries(filters).map(([k, v]) => (
+            <DreamspaceElements.Badge
+              key={k}
+              variant="secondary"
+              className="font-custom text-[10px] capitalize"
+            >
+              {k}: {v as any}
+            </DreamspaceElements.Badge>
+          ))}
+          <DreamspaceElements.Button
+            variant="destructive"
+            size="xs"
+            className="gap-1"
+            onClick={handleClearFilters}
+          >
+            {Lucide.XCircle && (
+              <Lucide.XCircle size={12} className="text-destructive-foreground" />
+            )}
+            <span className="font-custom text-[10px]">Clear</span>
+          </DreamspaceElements.Button>
+        </div>
+      )}
+
+      {/* Error Alert */}
+      {error && (
+        <DreamspaceElements.Alert variant="destructive" className="font-custom text-xs">
+          {Lucide.AlertTriangle && (
+            <Lucide.AlertTriangle size={14} className="text-destructive-foreground mr-2" />
+          )}{" "}
+          {error}
+          <a href="/settings" className="underline ml-2">
+            Account Settings
+          </a>
+        </DreamspaceElements.Alert>
+      )}
+
+      {/* Section 1: Build Matrix */}
+      <section className="border border-gray-300 rounded-md shadow-sm p-4 flex flex-col gap-4 bg-background flex-shrink-0">
+        <div className="flex items-center gap-2">
+          {Lucide.LayoutList && <Lucide.LayoutList size={16} className="text-site-foreground" />}
+          <h2 className="prose font-custom text-[11px] text-site-foreground tracking-wide uppercase">
+            Build Matrix
+          </h2>
+        </div>
+        <DreamspaceElements.Table>
+          <DreamspaceElements.TableHeader>
+            <DreamspaceElements.TableRow>
+              <DreamspaceElements.TableHead className="font-custom text-[11px]">
+                Configuration
+              </DreamspaceElements.TableHead>
+              <DreamspaceElements.TableHead className="font-custom text-[11px]">Job</DreamspaceElements.TableHead>
+              <DreamspaceElements.TableHead className="font-custom text-[11px]">Status</DreamspaceElements.TableHead>
+              <DreamspaceElements.TableHead className="font-custom text-[11px]">
+                Last Run
+              </DreamspaceElements.TableHead>
+            </DreamspaceElements.TableRow>
+          </DreamspaceElements.TableHeader>
+          <DreamspaceElements.TableBody>
+            {loading && renderSkeletonRows(6)}
+            {!loading &&
+              buildMatrixRows.map((row, idx) => (
+                <DreamspaceElements.TableRow key={idx} className="hover:bg-secondary/20">
+                  <DreamspaceElements.TableCell className="font-custom text-xs text-site-foreground">
+                    {row.configuration}
+                  </DreamspaceElements.TableCell>
+                  <DreamspaceElements.TableCell className="font-custom text-xs text-site-foreground">
+                    {row.job}
+                  </DreamspaceElements.TableCell>
+                  <DreamspaceElements.TableCell>{statusBadge(row.status)}</DreamspaceElements.TableCell>
+                  <DreamspaceElements.TableCell className="font-custom text-xs text-site-foreground">
+                    {row.lastRun}
+                  </DreamspaceElements.TableCell>
+                </DreamspaceElements.TableRow>
+              ))}
+          </DreamspaceElements.TableBody>
+        </DreamspaceElements.Table>
+      </section>
+
+      {/* Chevron Separator */}
+      <div className="w-full flex justify-center">
+        {Lucide.ChevronDown && <Lucide.ChevronDown size={18} className="text-gray-400" />}
+      </div>
+
+      {/* Section 2: Test Results Chart */}
+      <section className="border border-gray-300 rounded-md shadow-sm p-4 flex flex-col gap-4 bg-background flex-grow">
+        <div className="flex items-center gap-2">
+          {Lucide.BarChart && <Lucide.BarChart size={16} className="text-site-foreground" />}
+          <h2 className="prose font-custom text-[11px] text-site-foreground tracking-wide uppercase">
+            Test Results
+          </h2>
+        </div>
+        <div className="w-full h-64">
+          {loading ? (
+            <DreamspaceElements.Skeleton className="w-full h-full" />
+          ) : (
+            <ReactECharts
+              option={testChartOption}
+              style={{ width: "100%", height: "100%" }}
+              onChartReady={(chart: any) => {
+                if (chart && typeof chart.resize === "function")
+                  setTimeout(() => chart.resize(), 100);
+              }}
+            />
+          )}
+        </div>
+      </section>
+
+      {/* Chevron Separator */}
+      <div className="w-full flex justify-center">
+        {Lucide.ChevronDown && <Lucide.ChevronDown size={18} className="text-gray-400" />}
+      </div>
+
+      {/* Section 3: Artifact Downloads */}
+      <section className="border border-gray-300 rounded-md shadow-sm p-4 flex flex-col gap-4 bg-background flex-shrink-0">
+        <div className="flex items-center gap-2">
+          {Lucide.Package && <Lucide.Package size={16} className="text-site-foreground" />}
+          <h2 className="prose font-custom text-[11px] text-site-foreground tracking-wide uppercase">
+            Artifact Downloads
+          </h2>
+        </div>
+        {loading ? (
+          <div className="flex flex-col gap-3">
+            {Array.from({ length: 3 }, (_, i) => (
+              <DreamspaceElements.Skeleton key={i} className="h-8 w-full" />
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {artifacts.map((artifact) => (
+              <div
+                key={artifact.name}
+                className="flex items-center justify-between border-b border-gray-200 pb-2 hover:bg-secondary/20 px-2 rounded"
+              >
+                <div className="flex items-center gap-2">
+                  {Lucide.FileArchive && (
+                    <Lucide.FileArchive size={16} className="text-site-foreground" />
+                  )}
+                  <p className="font-custom text-sm text-site-foreground">
+                    {artifact.name}
+                  </p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <p className="font-custom text-xs text-site-foreground">
+                    {artifact.size}
+                  </p>
+                  <DreamspaceElements.TooltipProvider>
+                    <DreamspaceElements.Tooltip>
+                      <DreamspaceElements.TooltipTrigger asChild>
+                        <DreamspaceElements.Button
+                          variant="secondary"
+                          size="sm"
+                          className="gap-1"
+                        >
+                          {Lucide.Download && (
+                            <Lucide.Download size={14} className="text-foreground" />
+                          )}
+                          <span className="font-custom text-[11px]">Download</span>
+                        </DreamspaceElements.Button>
+                      </DreamspaceElements.TooltipTrigger>
+                      <DreamspaceElements.TooltipContent>
+                        <p className="font-custom text-xs">Click to download artifact</p>
+                      </DreamspaceElements.TooltipContent>
+                    </DreamspaceElements.Tooltip>
+                  </DreamspaceElements.TooltipProvider>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Chevron Separator */}
+      <div className="w-full flex justify-center">
+        {Lucide.ChevronDown && <Lucide.ChevronDown size={18} className="text-gray-400" />}
+      </div>
+
+      {/* Section 4: Logs Preview */}
+      <section className="border border-gray-300 rounded-md shadow-sm p-4 flex flex-col gap-4 bg-background flex-grow">
+        <div className="flex items-center gap-2">
+          {Lucide.FileText && <Lucide.FileText size={16} className="text-site-foreground" />}
+          <h2 className="prose font-custom text-[11px] text-site-foreground tracking-wide uppercase">
+            Logs Preview
+          </h2>
+        </div>
+        {loading ? (
+          <div className="flex flex-col gap-3">
+            {Array.from({ length: 3 }, (_, i) => (
+              <DreamspaceElements.Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3 overflow-y-auto">
+            {Object.entries(logData).map(([job, lines]) => (
+              <DreamspaceElements.Collapsible key={job} className="border border-gray-200 rounded-md">
+                <DreamspaceElements.CollapsibleTrigger asChild>
+                  <button className="w-full flex items-center justify-between p-2 hover:bg-secondary/20 text-left">
+                    <span className="font-custom text-sm text-site-foreground flex items-center gap-2">
+                      {Lucide.Terminal && (
+                        <Lucide.Terminal size={14} className="text-site-foreground" />
+                      )}
+                      {job} Logs
+                    </span>
+                    {Lucide.ChevronDown && (
+                      <Lucide.ChevronDown size={14} className="text-site-foreground" />
+                    )}
+                  </button>
+                </DreamspaceElements.CollapsibleTrigger>
+                <DreamspaceElements.CollapsibleContent className="px-4 py-2 bg-muted text-foreground font-mono text-xs whitespace-pre-wrap">
+                  {lines.join("\n")}
+                </DreamspaceElements.CollapsibleContent>
+              </DreamspaceElements.Collapsible>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+};
+
+export { MainAppComponent as component };
